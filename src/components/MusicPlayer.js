@@ -92,7 +92,7 @@ function MusicPlayer({ artist, onChangeArtist }) {
           playerRef.current.destroy();
         }
 
-        const player = new window.YT.Player('youtube-player', {
+        new window.YT.Player('youtube-player', {
           height: '0',
           width: '0',
           videoId: currentSong.youtubeId,
