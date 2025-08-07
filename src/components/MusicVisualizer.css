@@ -1,0 +1,50 @@
+.music-visualizer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 20px 0;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.visualizer-canvas {
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.visualizer-canvas:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+/* Animation for when music is playing */
+.music-visualizer.playing {
+  animation: pulse-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+  }
+  100% {
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .music-visualizer {
+    padding: 15px;
+    margin: 15px 0;
+  }
+  
+  .visualizer-canvas {
+    width: 250px;
+    height: 60px;
+  }
+}

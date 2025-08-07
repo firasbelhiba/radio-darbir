@@ -1,0 +1,56 @@
+{
+  "artists": {
+    "Fatma Bousseha": {
+      "name": "Fatma Bousseha",
+      "description": "Tunisian Mezwed artist with beautiful traditional music",
+      "image": "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop&crop=face",
+      "songs": [
+        {
+          "title": "Ya am el chiffour",
+          "youtubeId": "1uxkvZvNjDU",
+          "url": "https://www.youtube.com/watch?v=1uxkvZvNjDU",
+          "thumbnail": "https://img.youtube.com/vi/1uxkvZvNjDU/mqdefault.jpg",
+          "channelTitle": "Tunisian Music Channel",
+          "publishedAt": "2023-01-15T10:30:00Z"
+        },
+        {
+          "title": "Fatma - Mazal Mazal",
+          "youtubeId": "9bZkp7q19f0",
+          "url": "https://www.youtube.com/watch?v=9bZkp7q19f0",
+          "thumbnail": "https://img.youtube.com/vi/9bZkp7q19f0/mqdefault.jpg",
+          "channelTitle": "Mezwed Collection",
+          "publishedAt": "2023-02-20T15:45:00Z"
+        },
+        {
+          "title": "Fatma - Ya Habibi",
+          "youtubeId": "kJQP7kiw5Fk",
+          "url": "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
+          "thumbnail": "https://img.youtube.com/vi/kJQP7kiw5Fk/mqdefault.jpg",
+          "channelTitle": "Tunisian Folk Music",
+          "publishedAt": "2023-03-10T12:20:00Z"
+        },
+        {
+          "title": "Fatma - Sahra Sahra",
+          "youtubeId": "ZZ5LpwO-An4",
+          "url": "https://www.youtube.com/watch?v=ZZ5LpwO-An4",
+          "thumbnail": "https://img.youtube.com/vi/ZZ5LpwO-An4/mqdefault.jpg",
+          "channelTitle": "Modern Mezwed",
+          "publishedAt": "2023-04-05T18:30:00Z"
+        },
+        {
+          "title": "Fatma - Ya Zina",
+          "youtubeId": "dQw4w9WgXcQ",
+          "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          "thumbnail": "https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+          "channelTitle": "Contemporary Mezwed",
+          "publishedAt": "2023-05-12T14:15:00Z"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "generatedAt": "2024-01-15T10:30:00.000Z",
+    "totalArtists": 1,
+    "apiVersion": "YouTube Data API v3"
+  }
+}
