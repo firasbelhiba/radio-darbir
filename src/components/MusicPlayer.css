@@ -570,6 +570,37 @@
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+/* Loading indicator */
+.loading-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  color: #4a4a4a;
+  font-weight: 600;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(102, 126, 234, 0.35);
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Unmute banner uses existing .autoplay-notice button style */
+.autoplay-notice {
+  cursor: pointer;
+}
+
 @media (max-width: 768px) {
   .artist-info {
     flex-direction: column;

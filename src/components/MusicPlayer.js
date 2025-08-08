@@ -8,57 +8,61 @@ function MusicPlayer({ artist, onChangeArtist }) {
   const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
   const [apiReady, setApiReady] = useState(false);
-  const [volume, setVolume] = useState(50); // Default volume 50%
+  const [volume, setVolume] = useState(50);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playerState, setPlayerState] = useState(null);
   const [userInteracted, setUserInteracted] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
   const playerRef = useRef(null);
   const timeUpdateInterval = useRef(null);
+  const bufferingWatchdog = useRef(null);
   const playerInitialized = useRef(false);
   const currentVideoId = useRef(null);
 
   const currentSong = artist.songs[currentSongIndex];
 
-  // Define handleNextSong with useCallback to avoid recreation
   const handleNextSong = useCallback(() => {
     const nextIndex = (currentSongIndex + 1) % artist.songs.length;
     setCurrentSongIndex(nextIndex);
     setCurrentTime(0);
+    setIsLoading(true);
   }, [currentSongIndex, artist.songs.length]);
 
   const handlePreviousSong = useCallback(() => {
     const prevIndex = currentSongIndex === 0 ? artist.songs.length - 1 : currentSongIndex - 1;
     setCurrentSongIndex(prevIndex);
     setCurrentTime(0);
+    setIsLoading(true);
   }, [currentSongIndex, artist.songs.length]);
 
-  // Handle user interaction to enable autoplay
   const handleUserInteraction = useCallback(() => {
     if (!userInteracted) {
       setUserInteracted(true);
-      // Try to start playing if player is ready
-      if (playerReady && playerRef.current) {
-        try {
-          setIsPlaying(true);
-          playerRef.current.playVideo();
-        } catch (error) {
-          console.error('Error starting playback:', error);
-        }
-      }
     }
-  }, [userInteracted, playerReady]);
+    if (playerReady && playerRef.current) {
+      try {
+        if (isMuted) {
+          playerRef.current.unMute();
+          playerRef.current.setVolume(volume);
+          setIsMuted(false);
+        }
+        setIsPlaying(true);
+        playerRef.current.playVideo();
+      } catch {}
+    }
+  }, [userInteracted, playerReady, isMuted, volume]);
 
-  // Update background when song changes
   useEffect(() => {
-    if (currentSong && currentSong.thumbnail) {
+    if (currentSong?.thumbnail) {
       setBackgroundImage(currentSong.thumbnail);
     }
   }, [currentSong]);
 
-  // Load YouTube IFrame API
+  // Load YT API
   useEffect(() => {
     if (!window.YT) {
       const tag = document.createElement('script');
@@ -66,38 +70,47 @@ function MusicPlayer({ artist, onChangeArtist }) {
       const firstScriptTag = document.getElementsByTagName('script')[0];
       firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
     }
-
-    // Set up the API ready callback
-    window.onYouTubeIframeAPIReady = () => {
-      setApiReady(true);
-    };
-
-    // Cleanup function
-    return () => {
-      if (window.onYouTubeIframeAPIReady) {
-        window.onYouTubeIframeAPIReady = null;
-      }
-    };
+    window.onYouTubeIframeAPIReady = () => setApiReady(true);
+    return () => { window.onYouTubeIframeAPIReady = null; };
   }, []);
 
-  // Initialize player when API is ready
+  // Buffering watchdog: if stuck > 6s, retry once, then skip
+  const startBufferingWatchdog = useCallback(() => {
+    clearTimeout(bufferingWatchdog.current);
+    bufferingWatchdog.current = setTimeout(() => {
+      if (!playerRef.current) return;
+      try {
+        // Try a small seek to kick buffering
+        const t = playerRef.current.getCurrentTime();
+        playerRef.current.seekTo(Math.max(0, t - 0.25), true);
+        playerRef.current.playVideo();
+        // If still buffering after 4s, skip track
+        clearTimeout(bufferingWatchdog.current);
+        bufferingWatchdog.current = setTimeout(() => {
+          if (playerState === window.YT?.PlayerState?.BUFFERING) {
+            setIsLoading(false);
+            handleNextSong();
+          }
+        }, 4000);
+      } catch {
+        handleNextSong();
+      }
+    }, 6000);
+  }, [handleNextSong, playerState]);
+
+  // Init player
   useEffect(() => {
     if (!apiReady || !currentSong) return;
 
-    // Only initialize if we don't have a player or if the video ID changed
     if (!playerRef.current || currentVideoId.current !== currentSong.youtubeId) {
       try {
-        // Destroy existing player if it exists
-        if (playerRef.current) {
-          playerRef.current.destroy();
-        }
-
+        if (playerRef.current) playerRef.current.destroy();
         new window.YT.Player('youtube-player', {
           height: '0',
           width: '0',
           videoId: currentSong.youtubeId,
           playerVars: {
-            autoplay: 1, // Try to autoplay
+            autoplay: 1,
             controls: 0,
             disablekb: 1,
             enablejsapi: 1,
@@ -105,7 +118,7 @@ function MusicPlayer({ artist, onChangeArtist }) {
             iv_load_policy: 3,
             modestbranding: 1,
             rel: 0,
-            showinfo: 0
+            playsinline: 1
           },
           events: {
             onReady: (event) => {
@@ -113,169 +126,117 @@ function MusicPlayer({ artist, onChangeArtist }) {
               currentVideoId.current = currentSong.youtubeId;
               setPlayerReady(true);
               playerInitialized.current = true;
-              // Set initial volume
-              event.target.setVolume(volume);
-              // Try to start playing immediately
-              setIsPlaying(true);
+              setIsLoading(true);
+              try { event.target.setPlaybackQuality('small'); } catch {}
+              try { event.target.setVolume(volume); } catch {}
               try {
+                if (!userInteracted) { event.target.mute(); setIsMuted(true); }
+                setIsPlaying(true);
                 event.target.playVideo();
-              } catch (error) {
-                console.log('Autoplay blocked, waiting for user interaction');
+                startBufferingWatchdog();
+              } catch {
+                setIsPlaying(false);
               }
             },
             onStateChange: (event) => {
-              // Handle player state changes
               setPlayerState(event.data);
-              
               if (event.data === window.YT.PlayerState.ENDED) {
-                // Auto-play next song when current one ends
+                setIsLoading(false);
                 handleNextSong();
               } else if (event.data === window.YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
+                setIsLoading(false);
+                clearTimeout(bufferingWatchdog.current);
               } else if (event.data === window.YT.PlayerState.PAUSED) {
                 setIsPlaying(false);
+                setIsLoading(false);
+                clearTimeout(bufferingWatchdog.current);
               } else if (event.data === window.YT.PlayerState.BUFFERING) {
-                // Keep current state during buffering
+                setIsLoading(true);
+                startBufferingWatchdog();
               }
             },
-            onError: (event) => {
-              console.error('YouTube player error:', event.data);
-              // Try to play next song if there's an error
+            onError: () => {
+              setIsLoading(false);
               handleNextSong();
             }
           }
         });
-      } catch (error) {
-        console.error('Error initializing YouTube player:', error);
+      } catch (e) {
+        console.error('YT init error', e);
       }
     }
-  }, [apiReady, currentSong, handleNextSong, volume]);
+  }, [apiReady, currentSong, handleNextSong, volume, userInteracted, startBufferingWatchdog]);
 
-  // Handle song changes
+  // Song change
   useEffect(() => {
     if (playerReady && playerRef.current && currentSong && currentVideoId.current !== currentSong.youtubeId) {
       try {
+        setIsLoading(true);
         playerRef.current.loadVideoById(currentSong.youtubeId);
         currentVideoId.current = currentSong.youtubeId;
-        // Always start playing when changing songs
+        try { playerRef.current.setPlaybackQuality('small'); } catch {}
+        if (!userInteracted) { playerRef.current.mute(); setIsMuted(true); }
         setIsPlaying(true);
         playerRef.current.playVideo();
+        startBufferingWatchdog();
         setCurrentTime(0);
       } catch (error) {
-        console.error('Error loading video:', error);
+        setIsLoading(false);
       }
     }
-  }, [currentSongIndex, playerReady, currentSong]);
+  }, [currentSongIndex, playerReady, currentSong, userInteracted, startBufferingWatchdog]);
 
-  // Handle play/pause - Fixed to maintain position
+  // Play/pause
   useEffect(() => {
     if (playerReady && playerRef.current) {
       try {
         if (isPlaying) {
-          // Only play if not already playing
-          if (playerState !== window.YT.PlayerState.PLAYING) {
-            playerRef.current.playVideo();
-          }
+          if (playerState !== window.YT.PlayerState.PLAYING) playerRef.current.playVideo();
         } else {
-          // Only pause if not already paused
-          if (playerState !== window.YT.PlayerState.PAUSED) {
-            playerRef.current.pauseVideo();
-          }
+          if (playerState !== window.YT.PlayerState.PAUSED) playerRef.current.pauseVideo();
         }
-      } catch (error) {
-        console.error('Error controlling player:', error);
-      }
+      } catch {}
     }
   }, [isPlaying, playerReady, playerState]);
 
-  // Handle volume changes
+  // Volume
   useEffect(() => {
-    if (playerReady && playerRef.current) {
-      try {
-        playerRef.current.setVolume(volume);
-      } catch (error) {
-        console.error('Error setting volume:', error);
-      }
+    if (playerReady && playerRef.current && !isMuted) {
+      try { playerRef.current.setVolume(volume); } catch {}
     }
-  }, [volume, playerReady]);
+  }, [volume, playerReady, isMuted]);
 
-  // Update current time and duration
+  // Time updates
   useEffect(() => {
     if (playerReady && playerRef.current) {
       timeUpdateInterval.current = setInterval(() => {
         try {
-          const currentTime = playerRef.current.getCurrentTime();
-          const duration = playerRef.current.getDuration();
-          setCurrentTime(currentTime);
-          setDuration(duration);
-        } catch (error) {
-          console.error('Error getting time:', error);
-        }
-      }, 1000);
-    } else {
-      if (timeUpdateInterval.current) {
-        clearInterval(timeUpdateInterval.current);
-      }
+          setCurrentTime(playerRef.current.getCurrentTime());
+          setDuration(playerRef.current.getDuration());
+        } catch {}
+      }, 700);
     }
-
-    return () => {
-      if (timeUpdateInterval.current) {
-        clearInterval(timeUpdateInterval.current);
-      }
-    };
+    return () => { if (timeUpdateInterval.current) clearInterval(timeUpdateInterval.current); };
   }, [playerReady]);
 
-  const handlePlayPause = () => {
-    // Mark user interaction
-    handleUserInteraction();
-    // Toggle play/pause state
-    setIsPlaying(!isPlaying);
-  };
+  const handlePlayPause = () => { handleUserInteraction(); setIsPlaying(!isPlaying); };
+  const handleSongClick = (index) => { handleUserInteraction(); setCurrentSongIndex(index); setIsPlaying(true); setCurrentTime(0); };
+  const handleOpenYouTube = () => { if (currentSong?.url) window.open(currentSong.url, '_blank'); };
+  const handleVolumeChange = (e) => { handleUserInteraction(); const v = parseInt(e.target.value,10); setVolume(v); if (playerRef.current && !isMuted) playerRef.current.setVolume(v); };
+  const handleVolumeToggle = () => { handleUserInteraction(); setShowVolumeSlider(!showVolumeSlider); };
+  const handleUnmute = () => { if (playerRef.current) { try { playerRef.current.unMute(); playerRef.current.setVolume(volume); setIsMuted(false); setUserInteracted(true); setIsPlaying(true); playerRef.current.playVideo(); } catch {} } };
 
-  const handleSongClick = (index) => {
-    // Mark user interaction
-    handleUserInteraction();
-    setCurrentSongIndex(index);
-    setIsPlaying(true);
-    setCurrentTime(0);
-  };
+  const formatTime = (seconds) => { const m = Math.floor(seconds/60); const s = Math.floor(seconds%60); return `${m}:${s.toString().padStart(2,'0')}`; };
 
-  const handleOpenYouTube = () => {
-    if (currentSong && currentSong.url) {
-      window.open(currentSong.url, '_blank');
-    }
-  };
-
-  const handleVolumeChange = (e) => {
-    // Mark user interaction
-    handleUserInteraction();
-    const newVolume = parseInt(e.target.value);
-    setVolume(newVolume);
-  };
-
-  const handleVolumeToggle = () => {
-    // Mark user interaction
-    handleUserInteraction();
-    setShowVolumeSlider(!showVolumeSlider);
-  };
-
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Show loading state if API is not ready
   if (!apiReady) {
     return (
       <div className="music-player">
         <div className="container">
           <div className="player-header">
             <h1 className="title">🎵 Mezwed Radio</h1>
-            <p className="subtitle">Loading YouTube Player...</p>
-          </div>
-          <div className="loading-state">
-            <p>Initializing player...</p>
+            <p className="subtitle">Initializing player...</p>
+            <div className="loading-pill"><span className="spinner" /> Loading...</div>
           </div>
         </div>
       </div>
@@ -284,26 +245,15 @@ function MusicPlayer({ artist, onChangeArtist }) {
 
   return (
     <div className="music-player" onClick={handleUserInteraction}>
-      {/* Dynamic Background */}
       {backgroundImage && (
-        <div 
-          className="dynamic-background"
-          style={{
-            backgroundImage: `url(${backgroundImage})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat'
-          }}
-        />
+        <div className="dynamic-background" style={{ backgroundImage: `url(${backgroundImage})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} />
       )}
-      
       <div className="container">
         <div className="player-header">
           <h1 className="title">🎵 Mezwed Radio</h1>
           <p className="subtitle">Now Playing: {artist.name}</p>
-          {!userInteracted && (
-            <p className="autoplay-notice">Click anywhere to start playing!</p>
-          )}
+          {isLoading && (<div className="loading-pill"><span className="spinner" /> Loading...</div>)}
+          {!isLoading && isMuted && (<button className="autoplay-notice" onClick={handleUnmute}>Playing muted — Click to unmute</button>)}
         </div>
 
         <div className="player-content">
@@ -335,7 +285,6 @@ function MusicPlayer({ artist, onChangeArtist }) {
                 {new Date(currentSong.publishedAt).toLocaleDateString()}
               </span>
             </div>
-            {/* Progress Bar */}
             <div className="progress-container">
               <div className="progress-bar">
                 <div 
@@ -363,7 +312,6 @@ function MusicPlayer({ artist, onChangeArtist }) {
               <SkipForward size={24} />
             </button>
 
-            {/* Volume Control */}
             <div className="volume-control">
               <button 
                 className="volume-btn" 
@@ -430,14 +378,10 @@ function MusicPlayer({ artist, onChangeArtist }) {
           </div>
         </div>
 
-        {/* Hidden YouTube player */}
         <div id="youtube-player" style={{ display: 'none' }}></div>
       </div>
 
-      {/* Full-width visualizer at bottom */}
-      <div className="bottom-visualizer">
-        <MusicVisualizer isPlaying={isPlaying} />
-      </div>
+      <div className="bottom-visualizer"><MusicVisualizer isPlaying={isPlaying} /></div>
     </div>
   );
 }
