@@ -8,6 +8,7 @@ function MusicPlayer({ artist, onChangeArtist }) {
   const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
   const [apiReady, setApiReady] = useState(false);
+  const [apiFailed, setApiFailed] = useState(false);
   const [volume, setVolume] = useState(50);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -20,6 +21,10 @@ function MusicPlayer({ artist, onChangeArtist }) {
   const playerRef = useRef(null);
   const timeUpdateInterval = useRef(null);
   const bufferingWatchdog = useRef(null);
+  const startupTimeout = useRef(null);
+  const apiRetryTimeout = useRef(null);
+  const globalLoadingTimeout = useRef(null);
+  const apiFailTimeout = useRef(null);
   const playerInitialized = useRef(false);
   const currentVideoId = useRef(null);
 
@@ -57,35 +62,72 @@ function MusicPlayer({ artist, onChangeArtist }) {
   }, [userInteracted, playerReady, isMuted, volume]);
 
   useEffect(() => {
-    if (currentSong?.thumbnail) {
-      setBackgroundImage(currentSong.thumbnail);
-    }
+    if (currentSong?.thumbnail) setBackgroundImage(currentSong.thumbnail);
   }, [currentSong]);
 
-  // Load YT API
+  // Load YouTube API robustly + failure fallback
   useEffect(() => {
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    }
-    window.onYouTubeIframeAPIReady = () => setApiReady(true);
-    return () => { window.onYouTubeIframeAPIReady = null; };
+    const markReady = () => setApiReady(true);
+
+    const ensureScript = () => {
+      if (window.YT && window.YT.Player) {
+        markReady();
+        return;
+      }
+      window.onYouTubeIframeAPIReady = markReady;
+      const src = 'https://www.youtube.com/iframe_api';
+      let existing = Array.from(document.getElementsByTagName('script')).find(s => s.src === src);
+      if (!existing) {
+        const tag = document.createElement('script');
+        tag.src = src;
+        tag.async = true;
+        tag.defer = true;
+        tag.onerror = () => {
+          if (apiRetryTimeout.current) clearTimeout(apiRetryTimeout.current);
+          apiRetryTimeout.current = setTimeout(() => {
+            const retryTag = document.createElement('script');
+            retryTag.src = src;
+            retryTag.async = true;
+            retryTag.defer = true;
+            document.body.appendChild(retryTag);
+          }, 1500);
+        };
+        document.body.appendChild(tag);
+      }
+    };
+
+    ensureScript();
+
+    // If API not ready after 5s, mark as failed so UI doesn't look stuck
+    if (apiFailTimeout.current) clearTimeout(apiFailTimeout.current);
+    apiFailTimeout.current = setTimeout(() => {
+      if (!window.YT || !window.YT.Player) {
+        setApiFailed(true);
+      }
+    }, 5000);
+
+    return () => {
+      if (window.onYouTubeIframeAPIReady === markReady) window.onYouTubeIframeAPIReady = null;
+      if (apiRetryTimeout.current) clearTimeout(apiRetryTimeout.current);
+      if (apiFailTimeout.current) clearTimeout(apiFailTimeout.current);
+    };
   }, []);
 
-  // Buffering watchdog: if stuck > 6s, retry once, then skip
+  const clearWatchdogs = () => {
+    if (bufferingWatchdog.current) clearTimeout(bufferingWatchdog.current);
+    if (startupTimeout.current) clearTimeout(startupTimeout.current);
+    if (globalLoadingTimeout.current) clearTimeout(globalLoadingTimeout.current);
+  };
+
   const startBufferingWatchdog = useCallback(() => {
-    clearTimeout(bufferingWatchdog.current);
+    if (bufferingWatchdog.current) clearTimeout(bufferingWatchdog.current);
     bufferingWatchdog.current = setTimeout(() => {
       if (!playerRef.current) return;
       try {
-        // Try a small seek to kick buffering
         const t = playerRef.current.getCurrentTime();
         playerRef.current.seekTo(Math.max(0, t - 0.25), true);
         playerRef.current.playVideo();
-        // If still buffering after 4s, skip track
-        clearTimeout(bufferingWatchdog.current);
+        if (bufferingWatchdog.current) clearTimeout(bufferingWatchdog.current);
         bufferingWatchdog.current = setTimeout(() => {
           if (playerState === window.YT?.PlayerState?.BUFFERING) {
             setIsLoading(false);
@@ -98,7 +140,21 @@ function MusicPlayer({ artist, onChangeArtist }) {
     }, 6000);
   }, [handleNextSong, playerState]);
 
-  // Init player
+  const startStartupTimeout = useCallback(() => {
+    if (startupTimeout.current) clearTimeout(startupTimeout.current);
+    startupTimeout.current = setTimeout(() => {
+      setIsLoading(false);
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    globalLoadingTimeout.current = setTimeout(() => {
+      setIsLoading(false);
+    }, 8000);
+    return () => { if (globalLoadingTimeout.current) clearTimeout(globalLoadingTimeout.current); };
+  }, []);
+
+  // Initialize player (only when API is ready)
   useEffect(() => {
     if (!apiReady || !currentSong) return;
 
@@ -106,8 +162,9 @@ function MusicPlayer({ artist, onChangeArtist }) {
       try {
         if (playerRef.current) playerRef.current.destroy();
         new window.YT.Player('youtube-player', {
-          height: '0',
-          width: '0',
+          host: 'https://www.youtube-nocookie.com',
+          height: '1',
+          width: '1',
           videoId: currentSong.youtubeId,
           playerVars: {
             autoplay: 1,
@@ -118,7 +175,8 @@ function MusicPlayer({ artist, onChangeArtist }) {
             iv_load_policy: 3,
             modestbranding: 1,
             rel: 0,
-            playsinline: 1
+            playsinline: 1,
+            origin: window.location.origin
           },
           events: {
             onReady: (event) => {
@@ -134,41 +192,49 @@ function MusicPlayer({ artist, onChangeArtist }) {
                 setIsPlaying(true);
                 event.target.playVideo();
                 startBufferingWatchdog();
+                startStartupTimeout();
               } catch {
                 setIsPlaying(false);
+                setIsLoading(false);
               }
             },
             onStateChange: (event) => {
               setPlayerState(event.data);
               if (event.data === window.YT.PlayerState.ENDED) {
                 setIsLoading(false);
+                clearWatchdogs();
                 handleNextSong();
               } else if (event.data === window.YT.PlayerState.PLAYING) {
                 setIsPlaying(true);
                 setIsLoading(false);
-                clearTimeout(bufferingWatchdog.current);
+                clearWatchdogs();
               } else if (event.data === window.YT.PlayerState.PAUSED) {
                 setIsPlaying(false);
                 setIsLoading(false);
-                clearTimeout(bufferingWatchdog.current);
+                clearWatchdogs();
               } else if (event.data === window.YT.PlayerState.BUFFERING) {
                 setIsLoading(true);
                 startBufferingWatchdog();
+              } else if (
+                event.data === window.YT.PlayerState.UNSTARTED ||
+                event.data === window.YT.PlayerState.CUED
+              ) {
+                setIsLoading(false);
               }
             },
             onError: () => {
               setIsLoading(false);
+              clearWatchdogs();
               handleNextSong();
             }
           }
         });
       } catch (e) {
-        console.error('YT init error', e);
+        setIsLoading(false);
       }
     }
-  }, [apiReady, currentSong, handleNextSong, volume, userInteracted, startBufferingWatchdog]);
+  }, [apiReady, currentSong, handleNextSong, volume, userInteracted, startBufferingWatchdog, startStartupTimeout]);
 
-  // Song change
   useEffect(() => {
     if (playerReady && playerRef.current && currentSong && currentVideoId.current !== currentSong.youtubeId) {
       try {
@@ -180,14 +246,14 @@ function MusicPlayer({ artist, onChangeArtist }) {
         setIsPlaying(true);
         playerRef.current.playVideo();
         startBufferingWatchdog();
+        startStartupTimeout();
         setCurrentTime(0);
       } catch (error) {
         setIsLoading(false);
       }
     }
-  }, [currentSongIndex, playerReady, currentSong, userInteracted, startBufferingWatchdog]);
+  }, [currentSongIndex, playerReady, currentSong, userInteracted, startBufferingWatchdog, startStartupTimeout]);
 
-  // Play/pause
   useEffect(() => {
     if (playerReady && playerRef.current) {
       try {
@@ -200,14 +266,12 @@ function MusicPlayer({ artist, onChangeArtist }) {
     }
   }, [isPlaying, playerReady, playerState]);
 
-  // Volume
   useEffect(() => {
     if (playerReady && playerRef.current && !isMuted) {
       try { playerRef.current.setVolume(volume); } catch {}
     }
   }, [volume, playerReady, isMuted]);
 
-  // Time updates
   useEffect(() => {
     if (playerReady && playerRef.current) {
       timeUpdateInterval.current = setInterval(() => {
@@ -229,20 +293,6 @@ function MusicPlayer({ artist, onChangeArtist }) {
 
   const formatTime = (seconds) => { const m = Math.floor(seconds/60); const s = Math.floor(seconds%60); return `${m}:${s.toString().padStart(2,'0')}`; };
 
-  if (!apiReady) {
-    return (
-      <div className="music-player">
-        <div className="container">
-          <div className="player-header">
-            <h1 className="title">🎵 Mezwed Radio</h1>
-            <p className="subtitle">Initializing player...</p>
-            <div className="loading-pill"><span className="spinner" /> Loading...</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="music-player" onClick={handleUserInteraction}>
       {backgroundImage && (
@@ -252,8 +302,18 @@ function MusicPlayer({ artist, onChangeArtist }) {
         <div className="player-header">
           <h1 className="title">🎵 Mezwed Radio</h1>
           <p className="subtitle">Now Playing: {artist.name}</p>
-          {isLoading && (<div className="loading-pill"><span className="spinner" /> Loading...</div>)}
-          {!isLoading && isMuted && (<button className="autoplay-notice" onClick={handleUnmute}>Playing muted — Click to unmute</button>)}
+          {(!apiReady && !apiFailed) && (<div className="loading-pill"><span className="spinner" /> Loading player...</div>)}
+          {(apiFailed) && (
+            <div className="loading-pill" style={{background:'rgba(255,240,240,0.9)', color:'#b91c1c'}}>
+              Player failed to load. Check ad blockers/network.
+            </div>
+          )}
+          {isLoading && (<div className="loading-pill" style={{marginTop:8}}><span className="spinner" /> Loading...</div>)}
+          {!isLoading && (
+            <button className="autoplay-notice" onClick={handleUnmute}>
+              {isMuted ? 'Playing muted — Click to unmute' : 'Click to start playback'}
+            </button>
+          )}
         </div>
 
         <div className="player-content">
@@ -378,7 +438,8 @@ function MusicPlayer({ artist, onChangeArtist }) {
           </div>
         </div>
 
-        <div id="youtube-player" style={{ display: 'none' }}></div>
+        {/* Hidden YouTube player (1x1 to keep events firing) */}
+        <div id="youtube-player" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, visibility: 'hidden' }} />
       </div>
 
       <div className="bottom-visualizer"><MusicVisualizer isPlaying={isPlaying} /></div>
